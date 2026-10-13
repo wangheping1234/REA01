@@ -516,8 +516,9 @@ const KEYED_COLLECTION_CONSTRUCTORS = new Set([
 /**
  * Whether a get/delete receiver is spelled as a keyed collection: a
  * constructed Map, Set, Headers, FormData, or URLSearchParams, or a
- * `headers`/`searchParams` property. Spelling alone does not prove the
- * binding, so callers keep URL and path literals as requests.
+ * `headers`/`searchParams` property, or undici's `headersList` (the header
+ * store behind Node's fetch Request and Response). Spelling alone does not
+ * prove the binding, so callers keep URL and path literals as requests.
  */
 const isKeyedCollectionReceiver = (callee: t.Node): boolean => {
   if (!t.isMemberExpression(callee) && !t.isOptionalMemberExpression(callee))
@@ -537,7 +538,11 @@ const isKeyedCollectionReceiver = (callee: t.Node): boolean => {
     receiver.property,
     receiver.computed,
   );
-  return property === "headers" || property === "searchParams";
+  return (
+    property === "headers" ||
+    property === "headersList" ||
+    property === "searchParams"
+  );
 };
 
 /** Select the literal URL argument for recognized network callees. */
@@ -564,12 +569,14 @@ export const endpointArgument = (
     const value = stringValue(args[0]);
     // Only get and delete also belong to the keyed-collection APIs, whose
     // keys are header, field, and parameter names rather than URLs or paths.
-    // Configuration `get` reads setting keys.
+    // Configuration and extension state `get` read setting and state keys.
     return value !== undefined &&
       (method === "get" || method === "delete") &&
       !isRequestUrlLiteral(value) &&
       (isKeyedCollectionReceiver(callee) ||
-        (method === "get" && receiverFact === "configuration"))
+        (method === "get" &&
+          (receiverFact === "configuration" ||
+            receiverFact === "extension-state")))
       ? undefined
       : value;
   }
