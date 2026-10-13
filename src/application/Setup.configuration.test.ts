@@ -442,4 +442,27 @@ describe("setup tool family scope", () => {
       REA_MCP_TOOL_FAMILIES: "session,application",
     });
   });
+
+  it("still offers Hopper on an unconfigured machine when a scope is set", async () => {
+    const host = new FakeSetupHost("darwin");
+    host.version = "14.5";
+    host.skill = "unchanged";
+    host.clients = [{ name: "cursor", configPath: "/cursor.json" }];
+
+    const result = await runSetup(
+      {
+        ...options(false),
+        clientIds: ["cursor"],
+        toolFamilies: "session",
+        proposeHopper: true,
+      },
+      host,
+    );
+
+    // The advertised family scope is a registration setting, not provider
+    // discovery; it must not suppress the Hopper installation offer.
+    expect(result.plannedActions.map(({ kind }) => kind)).toContain(
+      "install_hopper",
+    );
+  });
 });

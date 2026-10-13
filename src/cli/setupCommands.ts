@@ -81,7 +81,7 @@ const registerSetupCommand = (
           { message: toolFamiliesConstraint },
         )
         .describe(
-          "Comma-separated tool families this registration advertises; omit to advertise every tool",
+          "Comma-separated tool families this registration advertises; omit to preserve the saved selection, or advertise every tool if none is saved. To restore every tool, remove REA_MCP_TOOL_FAMILIES from the client's registration and restart the client.",
         ),
       allDetected: z
         .boolean()

@@ -103,11 +103,6 @@ const runSetupWorkflow = async (
   if (unsupported !== undefined) return fail(unsupported);
   const initialState = await host.initialSetupState(options.readinessScope);
   let { hopperPath, providerEnvironment } = initialState;
-  if (options.toolFamilies !== undefined)
-    providerEnvironment = {
-      ...providerEnvironment,
-      REA_MCP_TOOL_FAMILIES: options.toolFamilies,
-    };
   const discovery = await discoverSetupState({
     host,
     providerEnvironment,
@@ -116,6 +111,14 @@ const runSetupWorkflow = async (
       options.proposeHopper ?? (confirm !== undefined && !options.structured),
     initialDoctor: initialState.doctor,
   });
+  // The advertised family scope is a registration setting, not a detected
+  // provider fact; merge it after discovery so it cannot suppress the
+  // Hopper installation offer on an otherwise unconfigured machine.
+  if (options.toolFamilies !== undefined)
+    providerEnvironment = {
+      ...providerEnvironment,
+      REA_MCP_TOOL_FAMILIES: options.toolFamilies,
+    };
   clientStates = discovery.clientStates;
   const clientSelectionAllowed =
     options.clientIds === undefined &&

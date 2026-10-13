@@ -159,3 +159,7 @@ for (const { id, contracts } of TOOL_FAMILY_DEFINITIONS)
 /** The family that owns a public tool name; undefined when none does. */
 export const toolFamilyId = (name: string): ToolFamilyId | undefined =>
   familyByTool.get(name);
+
+/** Whether a parsed selection value names a published tool family. */
+export const isToolFamilyId = (value: string): value is ToolFamilyId =>
+  (TOOL_FAMILY_IDS as readonly string[]).includes(value);

@@ -130,13 +130,20 @@ export class EvidenceMcpServer extends McpServer {
         : { ...config, inputSchema }) as never,
       callback as never,
     );
-    const family = toolFamilyId(name);
-    if (
-      this.advertisedToolFamilies !== undefined &&
-      (family === undefined || !this.advertisedToolFamilies.has(family))
-    )
-      registered.disable();
+    if (!this.advertisesTool(name)) registered.disable();
     return registered;
+  }
+
+  /**
+   * Whether a tool is advertised under this registration's family scope.
+   * Out-of-scope tools stay registered but disabled: `tools/list` omits
+   * them and calls fail with the SDK's disabled-tool error, so status
+   * reports cannot direct agents to calls that always fail.
+   */
+  advertisesTool(name: string): boolean {
+    if (this.advertisedToolFamilies === undefined) return true;
+    const family = toolFamilyId(name);
+    return family !== undefined && this.advertisedToolFamilies.has(family);
   }
 
   /** Preserve the SDK transport lifecycle while retaining oversized errors. */

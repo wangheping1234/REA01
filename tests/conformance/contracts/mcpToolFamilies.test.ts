@@ -1,7 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, expectTypeOf } from "vitest";
 
-import { parseMcpToolFamilies } from "../../../src/config/mcpToolFamilies.js";
-import { TOOL_FAMILY_IDS } from "../../../src/contracts/toolFamilies.js";
+import {
+  parseMcpToolFamilies,
+  type McpToolFamilies,
+} from "../../../src/config/mcpToolFamilies.js";
+import {
+  TOOL_FAMILY_IDS,
+  type ToolFamilyId,
+} from "../../../src/contracts/toolFamilies.js";
 
 describe("MCP tool families configuration", () => {
   it("accepts an unset scope and every valid family selection", () => {
@@ -35,4 +41,11 @@ describe("MCP tool families configuration", () => {
       expect(parsed.error.message).toContain("REA_MCP_TOOL_FAMILIES");
     },
   );
+
+  it("retains the published family-id type in the parsed result", () => {
+    expectTypeOf<McpToolFamilies>().toEqualTypeOf<ToolFamilyId[]>();
+    const parsed = parseMcpToolFamilies("session");
+    if (!parsed.ok) throw new Error("Expected valid selection");
+    expectTypeOf(parsed.value).toEqualTypeOf<McpToolFamilies | undefined>();
+  });
 });

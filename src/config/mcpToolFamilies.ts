@@ -1,6 +1,10 @@
 import { z } from "zod";
 
-import { TOOL_FAMILY_IDS } from "../contracts/toolFamilies.js";
+import {
+  isToolFamilyId,
+  TOOL_FAMILY_IDS,
+  type ToolFamilyId,
+} from "../contracts/toolFamilies.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 
@@ -8,6 +12,10 @@ import { err, ok, type Result } from "../domain/result.js";
 // to the families a workflow needs keeps the unneeded schemas out of the
 // session entirely; out-of-scope tools stay registered but disabled.
 export const toolFamiliesConstraint = `REA_MCP_TOOL_FAMILIES must be a non-empty comma-separated subset of the tool family ids: ${TOOL_FAMILY_IDS.join(", ")}.`;
+
+// The enum drives the output type so the parsed result retains the published
+// family ids; the non-empty guard preserves the constraint message.
+const toolFamilyIdSchema = z.enum(TOOL_FAMILY_IDS);
 
 export const mcpToolFamiliesSchema = z
   .string()
@@ -20,12 +28,11 @@ export const mcpToolFamiliesSchema = z
     ),
   ])
   .refine(
-    (families) =>
-      families.length > 0 &&
-      families.every((family) =>
-        (TOOL_FAMILY_IDS as readonly string[]).includes(family),
-      ),
+    (families) => families.length > 0 && families.every(isToolFamilyId),
     toolFamiliesConstraint,
+  )
+  .transform((families): ToolFamilyId[] =>
+    families.map((family) => toolFamilyIdSchema.parse(family)),
   );
 
 export type McpToolFamilies = z.infer<typeof mcpToolFamiliesSchema>;
