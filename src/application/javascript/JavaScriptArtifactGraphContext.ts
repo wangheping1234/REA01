@@ -68,6 +68,7 @@ export interface AstEdgeInput {
 /** Inferred static relationship edge values. */
 export interface InferenceEdgeInput extends AstEdgeInput {
   readonly limitations?: readonly string[];
+  readonly confidence?: "high" | "medium" | "low";
   readonly relation:
     | "imports"
     | "loads"
@@ -164,6 +165,9 @@ export const addStaticInferenceEdge = (
       range: input.range,
       operation: "map-static-relationship",
       coverage: input.coverage,
+      ...(input.confidence === undefined
+        ? {}
+        : { confidence: input.confidence }),
       ...(input.limitations === undefined
         ? {}
         : { limitations: input.limitations }),

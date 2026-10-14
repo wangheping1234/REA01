@@ -257,9 +257,15 @@ describe("web bundle static-analysis parity", () => {
       "/dynamic-method",
       "/shadowed-parent-xhr",
       "/xhr-get",
-      "api/relative",
       "https://xhr.example.test/submit",
     ]);
+    expect(result.inferences).toContainEqual(
+      expect.objectContaining({
+        kind: "endpoint_candidate",
+        value: "api/relative",
+        confidence: "low",
+      }),
+    );
   });
 });
 
@@ -356,11 +362,354 @@ describe("web bundle API classification parity", () => {
       "/search",
       "/users",
       "/v1/headers",
-      "cache-key",
       "https://api.example.test/headers",
       "https://api.example.test/users",
+    ]);
+    expect(
+      result.inferences
+        .filter(({ kind }) => kind === "endpoint_candidate")
+        .map(({ value }) => value)
+        .sort(),
+    ).toEqual(["cache-key", "users"]);
+  });
+});
+
+describe("web bundle explicit request reference forms", () => {
+  it("recognizes URL, path, query and fragment forms after excluding lookup receivers", () => {
+    const separators = ["/", "\\"];
+    const paths = separators.flatMap((separator) => [
+      separator,
+      `.${separator}`,
+      `..${separator}`,
+      `${separator}api${separator}users`,
+      `.${separator}users`,
+      `..${separator}users`,
+      ...separators.map(
+        (second) => `${separator}${second}api.example.test${separator}users`,
+      ),
+    ]);
+    const xhrReference = String.raw`..\xhr?tag=a&tag=b#part`;
+    const references = [
+      "http://api.example.test/users",
+      "https://api.example.test/users?q=1#part",
+      "ws://api.example.test/events",
+      "wss://api.example.test/events",
+      "http:api.example.test/users",
+      "https:api.example.test/users?q=1&tag=a&tag=b#part",
+      "https:api.example.test:443/a/../b?x=a+b&x=two#part",
+      "ws:api.example.test/events",
+      "wss:api.example.test/events",
+      "HtTpS:/api.example.test/users",
+      String.raw`https:\api.example.test\users`,
+      "https://[invalid",
+      ...paths,
+      ".",
+      "..",
+      String.raw`/api\users`,
+      String.raw`\api/users`,
+      String.raw`.\api/users?tag=a&tag=b#part`,
+      "?",
+      "?page=2&tag=a&tag=b#section",
+      "#",
+      "#section",
+      "#frag?tag=a&tag=b",
+    ];
+    const ambiguous = [
+      "",
+      "users",
+      "%23section",
+      "%3Fpage=2",
+      " #section",
+      " https:api.example.test/users",
+      "https:",
+      "http:?page=2",
+      "ws:#section",
+      "https:[invalid",
+      "https:api.example.test:99999",
+      "ftp:api.example.test/users",
+      "file:/users",
+      "data:text/plain,users",
+      String.raw`...\users`,
+      String.raw`users\child`,
+      String.raw` .\users`,
+      "%5capi%5cusers",
+      ".%5cusers",
+    ];
+    const source = `
+      ${references.map((value) => `api.get(${JSON.stringify(value)});`).join("\n")}
+      ${ambiguous.map((value) => `api.get(${JSON.stringify(value)});`).join("\n")}
+      xhr.open(method, "?view=1");
+      xhr.open(method, "#view=1");
+      xhr.open("GET", "#literal=1");
+      xhr.open(method, "https:api.example.test/xhr");
+      xhr.open(method, ${JSON.stringify(xhrReference)});
+      xhr.open("GET", ${JSON.stringify(String.raw`xhr\literal`)});
+      xhr.open(method, ${JSON.stringify(String.raw`xhr\ambiguous`)});
+      request("POST", target);
+      snackBar.open(message, "X");
+      new Map().get("?map-key");
+      new Map().get("#map-key");
+      new Map().get("https:api.example.test/map-key");
+      new Map().get(${JSON.stringify(String.raw`\\api.example.test\users`)});
+      new Headers().delete("?header-key");
+      new Headers().delete("#header-key");
+      new Headers().delete(${JSON.stringify(String.raw`..\users`)});
+      new URLSearchParams().get("?parameter-key");
+      new URLSearchParams().get("#parameter-key");
+      response.headers.get("?response-key");
+      response.headers.get("#response-key");
+      response.headers.get(${JSON.stringify(String.raw`\api\users`)});
+      const config = vscode.workspace.getConfiguration("git");
+      config.get("?setting");
+      config.get("#setting");
+      config.get("https:api.example.test/setting");
+      config.get(${JSON.stringify(String.raw`.\users`)});
+      window.open(url, "?window-target");
+      window.open(url, "#window-target");
+      indexedDB.open(name, "?database-version");
+      indexedDB.open(name, "#database-version");
+      caches.open(name, "#cache-name");
+      fs.open(path, "r");
+    `;
+    const expected = [
+      ...references,
+      "?view=1",
+      "#view=1",
+      "#literal=1",
+      "https:api.example.test/xhr",
+      xhrReference,
+      String.raw`xhr\literal`,
+    ].sort();
+    const expectedCandidates = [
+      ...ambiguous,
+      "POST",
+      "X",
+      String.raw`xhr\ambiguous`,
+    ].sort();
+    const web = analyzeCapturedWebBundle(inspection(source));
+    expect(web.observations.endpoints.map(({ value }) => value).sort()).toEqual(
+      expected,
+    );
+    expect(
+      web.inferences
+        .filter(({ kind }) => kind === "endpoint_candidate")
+        .map(({ value }) => value)
+        .sort(),
+    ).toEqual(expectedCandidates);
+    const analyzed = analyzeJavaScriptStaticSource(source);
+    expect(
+      analyzed.endpoints
+        .filter(({ interpretation }) => interpretation === undefined)
+        .map(({ value }) => value)
+        .sort(),
+    ).toEqual(expected);
+    expect(
+      analyzed.endpoints
+        .filter(({ interpretation }) => interpretation === "candidate")
+        .map(({ value }) => value)
+        .sort(),
+    ).toEqual(expectedCandidates);
+  });
+});
+
+it("uses parsed protocols and complete dot segments without widening lookup or leading-space admission", () => {
+  const schemeReferences = ["http", "https", "ws", "wss"].flatMap((scheme) =>
+    ["\t", "\n", "\r"].flatMap((control) =>
+      Array.from(
+        { length: scheme.length },
+        (_, index) =>
+          `${scheme.slice(0, index + 1)}${control}${scheme.slice(index + 1)}://api.example.test/users?q=1#part`,
+      ),
+    ),
+  );
+  const dotReferences = [".", "..", "%2e", ".%2E", "%2e.", "%2E%2e"].flatMap(
+    (segment) =>
+      ["", "/users", String.raw`\users`, "?q=1#part", "#part"].map(
+        (suffix) => segment + suffix,
+      ),
+  );
+  const references = [
+    ...schemeReferences,
+    ...dotReferences,
+    "h\nttps:api.example.test/rootless",
+    ".\t./users",
+    "%2\ne#control",
+    ". \t",
+  ];
+  const candidates = [
+    ...[" ", "\t", "\n", "\r", "\u0000", "\u001f"].map(
+      (prefix) => `${prefix}https://api.example.test/leading`,
+    ),
+    "ht\u0000tps://api.example.test/users",
+    "ht\u000btps://api.example.test/users",
+    "ht%09tps://api.example.test/users",
+    "ht\ttps://[invalid",
+    "ft\tp://api.example.test/users",
+    "custom:\thttps://api.example.test/users",
+    ".env",
+    "..env",
+    ".../users",
+    "%2efoo",
+    "%2e%2fusers",
+    "%252e",
+    "%2e%2e%2e",
+    ".\u00a0",
+  ];
+  const attributed = [
+    ["fetch", "\thttps://api.example.test/fetch"],
+    ["new EventSource", "\nhttps://api.example.test/events"],
+    ["navigator.sendBeacon", "\rhttps://api.example.test/beacon"],
+  ] as const;
+  const xhr = "w\rss://api.example.test/xhr";
+  const literalXhr = "\thttps://api.example.test/literal-xhr";
+  const lookupKeys = [schemeReferences[0]!, ".", "..", ".?q", "%2e"];
+  const source = `
+    ${[...references, ...candidates].map((value) => `api.get(${JSON.stringify(value)});`).join("\n")}
+    ${attributed.map(([callee, value]) => `${callee}(${JSON.stringify(value)});`).join("\n")}
+    xhr.open(method, ${JSON.stringify(xhr)});
+    xhr.open("GET", ${JSON.stringify(literalXhr)});
+    const config = vscode.workspace.getConfiguration("git");
+    ${lookupKeys.map((value) => `new Map().get(${JSON.stringify(value)}); new Headers().delete(${JSON.stringify(value)}); config.get(${JSON.stringify(value)});`).join("\n")}
+  `;
+  const expected = [
+    ...references,
+    ...attributed.map(([, value]) => value),
+    xhr,
+    literalXhr,
+  ].sort();
+  const web = analyzeCapturedWebBundle(inspection(source));
+  expect(web.observations.endpoints.map(({ value }) => value).sort()).toEqual(
+    expected,
+  );
+  expect(
+    web.inferences
+      .filter(({ kind }) => kind === "endpoint_candidate")
+      .map(({ value }) => value)
+      .sort(),
+  ).toEqual([...candidates].sort());
+  const analyzed = analyzeJavaScriptStaticSource(source);
+  expect(
+    analyzed.endpoints
+      .filter(({ interpretation }) => interpretation === undefined)
+      .map(({ value }) => value)
+      .sort(),
+  ).toEqual(expected);
+  expect(
+    analyzed.endpoints
+      .filter(({ interpretation }) => interpretation === "candidate")
+      .map(({ value }) => value)
+      .sort(),
+  ).toEqual([...candidates].sort());
+});
+
+describe("web bundle endpoint candidate classification", () => {
+  it("keeps ambiguous HTTP-method arguments as candidates instead of endpoint observations", () => {
+    const source = `
+      fetch("login");
+      api.get("/api/users");
+      api.get("users");
+      form.get("passwordControl");
+      translate.get("ADDRESS_ADDED");
+      cookieService.put("token", value);
+      http.request("POST", target);
+      snackBar.open(message, "X");
+      xhr.open(method, "login");
+      xhr.open("GET", "ping");
+    `;
+    const result = analyzeCapturedWebBundle(inspection(source));
+    expect(
+      result.observations.endpoints.map(({ value }) => value).sort(),
+    ).toEqual(["/api/users", "login", "ping"]);
+    const candidates = result.inferences.filter(
+      ({ kind }) => kind === "endpoint_candidate",
+    );
+    expect(candidates.map(({ value }) => value).sort()).toEqual([
+      "ADDRESS_ADDED",
+      "POST",
+      "X",
+      "login",
+      "passwordControl",
+      "token",
       "users",
     ]);
+    expect(
+      candidates.every(
+        ({ confidence, basis }) =>
+          confidence === "low" &&
+          basis.length === 1 &&
+          basis[0]?.artifact_sha256 ===
+            createWebTextArtifact(source, "text/javascript").sha256 &&
+          basis[0]?.line !== null &&
+          basis[0]?.detector.startsWith("call:"),
+      ),
+    ).toBe(true);
+    const staticEndpoints = analyzeJavaScriptStaticSource(source).endpoints;
+    expect(
+      staticEndpoints
+        .filter(({ interpretation }) => interpretation === "candidate")
+        .map(({ value }) => value)
+        .sort(),
+    ).toEqual(candidates.map(({ value }) => value).sort());
+    expect(
+      staticEndpoints
+        .filter(({ interpretation }) => interpretation === undefined)
+        .map(({ value }) => value)
+        .sort(),
+    ).toEqual(result.observations.endpoints.map(({ value }) => value).sort());
+    expect(webBundleAnalysisSchema.parse(result)).toEqual(result);
+  });
+
+  it("deduplicates repeated candidate sites while keeping script, value and detector identity", () => {
+    const source = `${'form.get("name");\n'.repeat(5_000)}translate.get("name");\nform.get("other");`;
+    const captured = inspection(source);
+    const first = captured.scripts.items[0];
+    if (first === undefined) throw new Error("Missing captured script fixture");
+    const secondKey = `scr_${"2".repeat(64)}`;
+    const result = analyzeCapturedWebBundle({
+      ...captured,
+      scripts: {
+        total: 2,
+        items: [
+          first,
+          {
+            ...first,
+            script_key: secondKey,
+            url: `${origin}/assets/second.js`,
+          },
+        ],
+      },
+    });
+    const candidates = result.inferences.filter(
+      ({ kind }) => kind === "endpoint_candidate",
+    );
+    expect(candidates).toHaveLength(6);
+    for (const scriptKey of [first.script_key, secondKey]) {
+      const local = candidates.filter(
+        ({ basis }) => basis[0]?.script_key === scriptKey,
+      );
+      expect(
+        local.map(({ value, basis }) => [value, basis[0]?.detector]),
+      ).toEqual([
+        ["name", "call:form.get:unverified-network-receiver"],
+        ["name", "call:translate.get:unverified-network-receiver"],
+        ["other", "call:form.get:unverified-network-receiver"],
+      ]);
+      expect(local[0]?.basis[0]).toMatchObject({
+        line: 1,
+        column: 0,
+        artifact_sha256: createWebTextArtifact(source, "text/javascript")
+          .sha256,
+      });
+    }
+    expect(result.observations.endpoints).toEqual([]);
+    expect(result.capture.source_artifacts).toHaveLength(2);
+    expect(result.completeness).toMatchObject({
+      status: "complete",
+      parsed_scripts: 2,
+    });
+    expect(result.limitations).toContain(
+      'Endpoint candidates are deduplicated by script, value and detector; basis retains only the first matching source coordinate. They are not a complete call-site inventory or a runtime occurrence count. completeness.status="complete" describes examination of captured source, not a call-site census.',
+    );
   });
 });
 
@@ -408,11 +757,16 @@ describe("web bundle configuration and navigation parity", () => {
       "shadowed",
       "users",
     ];
+    const web = analyzeCapturedWebBundle(inspection(source));
+    expect(web.observations.endpoints.map(({ value }) => value)).toEqual([
+      "/v1/settings",
+    ]);
     expect(
-      analyzeCapturedWebBundle(inspection(source))
-        .observations.endpoints.map(({ value }) => value)
+      web.inferences
+        .filter(({ kind }) => kind === "endpoint_candidate")
+        .map(({ value }) => value)
         .sort(),
-    ).toEqual(expected);
+    ).toEqual(expected.slice(1));
     expect(
       analyzeJavaScriptStaticSource(source)
         .endpoints.map(({ value }) => value)
