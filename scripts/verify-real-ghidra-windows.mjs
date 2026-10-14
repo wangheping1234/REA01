@@ -102,9 +102,8 @@ const client = new GhidraClient({
   launcher: new GhidraHeadlessLauncher({
     environment: process.env,
     analyzeHeadlessPath: installation.analyzeHeadlessPath,
-    ...(process.env.JAVA_HOME === undefined
-      ? {}
-      : { javaHome: process.env.JAVA_HOME }),
+    javaHome: installation.javaHome,
+    javaVmName: installation.javaVmName,
     bridgeScriptPath: fileURLToPath(
       new URL("../bridge/ghidra/ReaGhidraBridge.java", import.meta.url),
     ),
@@ -202,6 +201,20 @@ try {
   )
     throw new Error(
       "Windows loaded bytes disagree with the observed source-file mapping",
+    );
+  const byteSearch = await inventory("search_bytes", {
+    pattern: memory.bytes_hex,
+    start: procedure.address,
+    end: `0x${(BigInt(procedure.address) + 15n).toString(16)}`,
+  });
+  if (
+    !byteSearch.complete ||
+    byteSearch.searched.bytes !== 16 ||
+    byteSearch.matches.length !== 1 ||
+    byteSearch.matches[0]?.address !== procedure.address
+  )
+    throw new Error(
+      "Windows byte search lost the independently verified procedure bytes.",
     );
 
   await inventory("address_name", { address: procedure.address });
